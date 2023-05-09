@@ -32,9 +32,22 @@ public class Query extends QueryAbstract {
    */
   public void clearTables() {
     try {
-      // TODO: YOUR CODE HERE
-    } catch (Exception e) {
-      e.printStackTrace();
+      Statement statement = conn.createStatement() ;
+
+      // Clear Users_ckirby03
+      String clear1 = "TRUNCATE TABLE Users_ckirby03";
+      statement.executeUpdate(clear1);
+
+      // Clear Reservations_ckirby03
+      String clear2 = "TRUNCATE TABLE Reservations_ckirby03";
+      statement.executeUpdate(clear2);
+
+      // Clear Itineraries_ckirby03
+      String clear3 = "TRUNCATE TABLE Itineraries_ckirby03";
+      statement.executeUpdate(clear3);
+
+    } catch (SQLException e) {
+        e.printStackTrace();
     }
   }
 

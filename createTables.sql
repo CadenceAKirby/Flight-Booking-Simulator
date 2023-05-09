@@ -1,4 +1,22 @@
--- Add all your SQL setup statements here. 
+-- Add all your SQL setup statements here.
+
+CREATE TABLE Users_ckirby03 (
+                                username varchar(30) PRIMARY KEY,
+                                password varbinary,
+                                balance int
+);
+CREATE TABLE Reservations_ckirby03 (
+                                       rid int PRIMARY KEY,
+                                       username varchar(30) REFERENCES Users_ckirby03(username),
+                                       paid int, -- boolean; 1 means paid
+                                       itid int REFERENCES Itineraries_ckirby03(itid)
+);
+CREATE TABLE Itineraries_ckirby03 (
+                                      itid int PRIMARY KEY,
+                                      fid1 int REFERENCES FLIGHTS(fid),
+                                      fid2 int REFERENCES FLIGHTS(fid)
+);
+
 
 -- When we test your submission, you can assume that the following base
 -- tables have been created and loaded with data.  However, before testing
