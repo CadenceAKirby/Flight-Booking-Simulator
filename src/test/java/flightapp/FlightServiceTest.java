@@ -343,7 +343,7 @@ public class FlightServiceTest {
       // to disable table resetting.
       boolean dropTables = System.getProperty("flightapp.droptables", "true")
         .equalsIgnoreCase("true");
-      if (dropTables) {
+      if (false) {
         String tableSuffix = DBConnUtils.getTableSuffix();
         if (tableSuffix != null) {
           System.out.println("... resetting database (ie, dropping all tables with suffix: "

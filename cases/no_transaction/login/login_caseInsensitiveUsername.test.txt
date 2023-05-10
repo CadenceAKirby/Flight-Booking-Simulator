@@ -1,0 +1,13 @@
+# Verify that username can be entered case-insensitively and still work
+
+# commands to execute:
+create ckirby03 blueberryRedCHip 100
+login CKIRBY03 blueberryRedCHip
+quit
+*
+
+# expected output:
+Created user ckirby03
+Logged in as ckirby03
+Goodbye
+*

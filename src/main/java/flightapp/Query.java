@@ -13,16 +13,50 @@ public class Query extends QueryAbstract {
   //
   // Canned queries
   //
-  private static final String FLIGHT_CAPACITY_SQL = "SELECT capacity FROM Flights WHERE fid = ?";
+  private static final String FLIGHT_CAPACITY_SQL =
+          "SELECT capacity FROM Flights WHERE fid = ?";
+  private static final String MATCHING_USERNAME_SQL =
+          "SELECT * FROM Users_ckirby03 WHERE LOWER(username) = LOWER(?)";
+  private static final String ADD_USER_SQL =
+          "INSERT INTO Users_ckirby03 VALUES (?, ?, ?)";
+  private static final String FIND_DIRECT_ITINERARY_SQL =
+          "SELECT fid, day_of_month, carrier_id, flight_num, origin_city, dest_city, actual_time, capacity, price \n" +
+                  "FROM FLIGHTS AS f\n" +
+                  "WHERE origin_city = ? AND dest_city = ? AND day_of_month = ? AND canceled = 0\n" +
+                  "ORDER BY actual_time, fid";
+
+  private static final String FIND_INDIRECT_ITINERARY_SQL =
+          "SELECT f1.fid AS f1_fid, f1.day_of_month AS f1_day_of_month, f1.carrier_id AS f1_carrier_id, " +
+                  "f1.flight_num AS f1_flight_num, f1.origin_city AS f1_origin_city, " +
+                  "f1.dest_city AS f1_dest_city, f1.actual_time AS f1_actual_time, f1.capacity AS f1_capacity, " +
+                  "f1.price AS f1_price, f2.fid AS f2_fid, f2.day_of_month AS f2_day_of_month, " +
+                  "f2.carrier_id AS f2_carrier_id, f2.flight_num AS f2_flight_num, f2.origin_city AS f2_origin_city, " +
+                  "f2.dest_city AS f2_dest_city, f2.actual_time AS f2_actual_time, f2.capacity AS f2_capacity, " +
+                  "f2.price AS f2_price," +
+                  "f1.actual_time + f2.actual_time AS total_time" +
+                  "FROM FLIGHTS AS f1" +
+                  "JOIN FLIGHTS AS f2 ON f1.dest_city = f2.origin_city" +
+                  "WHERE f1.origin_city = ? AND f2.dest_city = ? AND f1.day_of_month = ?" +
+                  "AND f1.canceled = 0 AND f2.canceled = 0" +
+                  "ORDER BY total_time, f1.fid, f2.fid";
+
   private PreparedStatement flightCapacityStmt;
+  private PreparedStatement matchingUsernameStmt;
+  private PreparedStatement addUserStmt;
+  private PreparedStatement findDirectItineraryStmt;
+  private PreparedStatement findIndirectItineraryStmt;
 
   //
   // Instance variables
   //
 
+  private boolean loggedIn;
+  private PasswordUtils managePassword;
 
   protected Query() throws SQLException, IOException {
     prepareStatements();
+    loggedIn = false;
+    managePassword = new PasswordUtils();
   }
 
   /**
@@ -34,16 +68,16 @@ public class Query extends QueryAbstract {
     try {
       Statement statement = conn.createStatement() ;
 
-      // Clear Users_ckirby03
-      String clear1 = "TRUNCATE TABLE Users_ckirby03";
+      // Clear Reservations_ckirby03
+      String clear1 = "DELETE FROM Reservations_ckirby03";
       statement.executeUpdate(clear1);
 
-      // Clear Reservations_ckirby03
-      String clear2 = "TRUNCATE TABLE Reservations_ckirby03";
+      // Clear Itineraries_ckirby03
+      String clear2 = "DELETE FROM Itineraries_ckirby03";
       statement.executeUpdate(clear2);
 
-      // Clear Itineraries_ckirby03
-      String clear3 = "TRUNCATE TABLE Itineraries_ckirby03";
+      // Clear Users_ckirby03
+      String clear3 = "DELETE FROM Users_ckirby03";
       statement.executeUpdate(clear3);
 
     } catch (SQLException e) {
@@ -56,8 +90,11 @@ public class Query extends QueryAbstract {
    */
   private void prepareStatements() throws SQLException {
     flightCapacityStmt = conn.prepareStatement(FLIGHT_CAPACITY_SQL);
+    matchingUsernameStmt = conn.prepareStatement(MATCHING_USERNAME_SQL);
+    addUserStmt = conn.prepareStatement(ADD_USER_SQL);
+    findDirectItineraryStmt = conn.prepareStatement(FIND_DIRECT_ITINERARY_SQL);
+    findIndirectItineraryStmt = conn.prepareStatement(FIND_INDIRECT_ITINERARY_SQL);
 
-    // TODO: YOUR CODE HERE
   }
 
   /**
@@ -70,7 +107,17 @@ public class Query extends QueryAbstract {
    *         other errors, return "Login failed\n". Otherwise, return "Logged in as [username]\n".
    */
   public String transaction_login(String username, String password) {
-    // TODO: YOUR CODE HERE
+    if (loggedIn) {
+      return "User already logged in\n";
+    }
+    try {
+      if (matchingLogin(username, password)) {
+        loggedIn = true;
+        return "Logged in as " + username + "\n";
+      }
+    } catch (SQLException e) {
+      e.printStackTrace();
+    }
     return "Login failed\n";
   }
 
@@ -85,8 +132,62 @@ public class Query extends QueryAbstract {
    * @return either "Created user {@code username}\n" or "Failed to create user\n" if failed.
    */
   public String transaction_createCustomer(String username, String password, int initAmount) {
-    // TODO: YOUR CODE HERE
-    return "Failed to create user\n";
+    if (initAmount < 0) {
+      return "Failed to create user\n";
+    }
+    boolean usernameExists = true;
+    try {
+      usernameExists = matchingUsername(username);
+    } catch (SQLException e){
+      e.printStackTrace();
+    }
+
+    if (usernameExists) {
+      return "Failed to create user\n";
+    } else {
+      try {
+        addUser(username, password, initAmount);
+      } catch (SQLException e) {
+        e.printStackTrace();
+      }
+    }
+    return "Created user " + username + "\n";
+  }
+
+  // Returns true if parameterized username exists in the database (case-insensitively)
+  private boolean matchingUsername(String username) throws SQLException {
+    matchingUsernameStmt.clearParameters();
+    matchingUsernameStmt.setString(1, username);
+    ResultSet results = matchingUsernameStmt.executeQuery();
+    int numEquivalentUsernames = 0;
+    while (results.next()) {
+      numEquivalentUsernames++;
+    }
+    results.close();
+    return numEquivalentUsernames != 0;
+  }
+
+  // Returns true if parameterized username and password matches a registered
+  //    username/password combination
+  private boolean matchingLogin(String username, String password) throws SQLException {
+    matchingUsernameStmt.clearParameters();
+    matchingUsernameStmt.setString(1, username);
+    ResultSet results = matchingUsernameStmt.executeQuery();
+    while (results.next()) {
+      byte[] storedHash = results.getBytes("password");
+      results.close();
+      return managePassword.plaintextMatchesSaltedHash(password, storedHash);
+    }
+    return false;
+  }
+
+  // Adds user to database
+  private void addUser(String username, String password, int initAmount) throws SQLException {
+    addUserStmt.clearParameters();
+    addUserStmt.setString(1, username);
+    addUserStmt.setBytes(2, managePassword.saltAndHashPassword(password));
+    addUserStmt.setInt(3, initAmount);
+    addUserStmt.executeUpdate();
   }
 
   /**
@@ -122,46 +223,81 @@ public class Query extends QueryAbstract {
   public String transaction_search(String originCity, String destinationCity, 
                                    boolean directFlight, int dayOfMonth,
                                    int numberOfItineraries) {
-    // WARNING: the below code is insecure (it's susceptible to SQL injection attacks) AND only
-    // handles searches for direct flights.  We are providing it *only* as an example of how
-    // to use JDBC; you are required to replace it with your own secure implementation.
-    //
-    // TODO: YOUR CODE HERE
 
+    if (numberOfItineraries <= 0) {
+      return "Failed to search\n";
+    }
     StringBuffer sb = new StringBuffer();
-
     try {
-      // one hop itineraries
-      String unsafeSearchSQL = "SELECT TOP (" + numberOfItineraries
-        + ") day_of_month,carrier_id,flight_num,origin_city,dest_city,actual_time,capacity,price "
-        + "FROM Flights " + "WHERE origin_city = \'" + originCity + "\' AND dest_city = \'"
-        + destinationCity + "\' AND day_of_month =  " + dayOfMonth + " "
-        + "ORDER BY actual_time ASC";
-
-      Statement searchStatement = conn.createStatement();
-      ResultSet oneHopResults = searchStatement.executeQuery(unsafeSearchSQL);
-
-      while (oneHopResults.next()) {
-        int result_dayOfMonth = oneHopResults.getInt("day_of_month");
-        String result_carrierId = oneHopResults.getString("carrier_id");
-        String result_flightNum = oneHopResults.getString("flight_num");
-        String result_originCity = oneHopResults.getString("origin_city");
-        String result_destCity = oneHopResults.getString("dest_city");
-        int result_time = oneHopResults.getInt("actual_time");
-        int result_capacity = oneHopResults.getInt("capacity");
-        int result_price = oneHopResults.getInt("price");
-
-        sb.append("Day: " + result_dayOfMonth + " Carrier: " + result_carrierId + " Number: "
-                  + result_flightNum + " Origin: " + result_originCity + " Destination: "
-                  + result_destCity + " Duration: " + result_time + " Capacity: " + result_capacity
-                  + " Price: " + result_price + "\n");
+      sb = findItineraries(sb, originCity, destinationCity,
+              dayOfMonth, numberOfItineraries, directFlight);
+      if (sb.length() == 0) {
+        return "No flights match your selection\n";
+      } else {
+        return sb.toString();
       }
-      oneHopResults.close();
     } catch (SQLException e) {
       e.printStackTrace();
     }
+    return "Failed to search\n";
+  }
 
-    return sb.toString();
+  private StringBuffer findItineraries(StringBuffer sb, String originCity, String destCity,
+        int dayOfMonth, int numItineraries, boolean directFlight) throws SQLException {
+    findDirectItineraryStmt.clearParameters();
+    findDirectItineraryStmt.setString(1, originCity);
+    findDirectItineraryStmt.setString(2, destCity);
+    findDirectItineraryStmt.setInt(3, dayOfMonth);
+    ResultSet results = findDirectItineraryStmt.executeQuery();
+    int numProcessed = 0;
+    while (results.next() && numProcessed < numItineraries) {
+      sb.append("Itinerary " + numProcessed + ": 1 flight(s), "
+                      + results.getInt("actual_time") + " minutes \n"
+              + "ID: " + results.getInt("fid")
+              + " Day: " + results.getInt("day_of_month")
+              + " Carrier: " + results.getString("carrier_id")
+              + " Number: " + results.getInt("flight_num")
+              + " Origin: " + results.getString("origin_city")
+              + " Destination: " + results.getString("dest_city")
+              + " Duration: " + results.getInt("actual_time")
+              + " Capacity: " + results.getInt("capacity")
+              + " Price: " + results.getInt("price") + "\n");
+      numProcessed++;
+    }
+    results.close();
+
+    if (!directFlight && numProcessed < numItineraries) {
+      findIndirectItineraryStmt.clearParameters();
+      findIndirectItineraryStmt.setString(1, originCity);
+      findIndirectItineraryStmt.setString(2, destCity);
+      findIndirectItineraryStmt.setInt(3, dayOfMonth);
+      ResultSet results2 = findIndirectItineraryStmt.executeQuery();
+      while (results2.next() && numProcessed < numItineraries) {
+        sb.append("Itinerary " + numProcessed + ": 2 flight(s), "
+                + results2.getInt("total_time") + " minutes \n"
+                + "ID: " + results2.getInt("f1_fid")
+                + " Day: " + results2.getInt("f1_day_of_month")
+                + " Carrier: " + results2.getString("f1_carrier_id")
+                + " Number: " + results2.getInt("f1_flight_num")
+                + " Origin: " + results2.getString("f1_origin_city")
+                + " Destination: " + results2.getString("f1_dest_city")
+                + " Duration: " + results2.getInt("f1_actual_time")
+                + " Capacity: " + results2.getInt("f1_capacity")
+                + " Price: " + results2.getInt("f1_price") + "\n"
+                + "ID: " + results2.getInt("f2_fid")
+                + " Day: " + results2.getInt("f2_day_of_month")
+                + " Carrier: " + results2.getString("f2_carrier_id")
+                + " Number: " + results2.getInt("f2_flight_num")
+                + " Origin: " + results2.getString("f2_origin_city")
+                + " Destination: " + results2.getString("f2_dest_city")
+                + " Duration: " + results2.getInt("f2_actual_time")
+                + " Capacity: " + results2.getInt("f2_capacity")
+                + " Price: " + results2.getInt("f2_price") + "\n");
+        numProcessed++;
+      }
+      results2.close();
+    }
+    return sb;
   }
 
   /**

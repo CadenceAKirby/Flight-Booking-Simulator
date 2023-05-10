@@ -1,0 +1,11 @@
+# Verify that this itinerary does not return a valid result
+
+# commands:
+search "Seattle WA" "Seattle WA" 1 1 1
+quit
+*
+
+# expected command output:
+Failed to search
+Goodbye
+*
