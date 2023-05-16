@@ -1,10 +1,11 @@
 # Verify that a negative initial balance is not accepted
 
 # commands to execute:
-create user 2176286 applecrisp34 -10
+create 2176286 applecrisp34 -10
 quit
 *
 
 # expected output from those commands:
 Failed to create user
 Goodbye
+*
