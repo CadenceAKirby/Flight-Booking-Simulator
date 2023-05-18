@@ -1,11 +1,12 @@
 package flightapp;
 
+import javax.xml.transform.Result;
 import java.io.IOException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashMap;
+import java.util.*;
 
 /**
  * Runs queries against a back-end database
@@ -34,20 +35,21 @@ public class Query extends QueryAbstract {
                   "f2.carrier_id AS f2_carrier_id, f2.flight_num AS f2_flight_num, f2.origin_city AS f2_origin_city, " +
                   "f2.dest_city AS f2_dest_city, f2.actual_time AS f2_actual_time, f2.capacity AS f2_capacity, " +
                   "f2.price AS f2_price," +
-                  "f1.actual_time + f2.actual_time AS total_time" +
-                  "FROM FLIGHTS AS f1" +
-                  "JOIN FLIGHTS AS f2 ON f1.dest_city = f2.origin_city" +
-                  "WHERE f1.origin_city = ? AND f2.dest_city = ? AND f1.day_of_month = ?" +
-                  "AND f1.canceled = 0 AND f2.canceled = 0" +
+                  "f1.actual_time + f2.actual_time AS total_time " +
+                  "FROM FLIGHTS AS f1 " +
+                  "JOIN FLIGHTS AS f2 ON f1.dest_city = f2.origin_city " +
+                  "WHERE f1.origin_city = ? AND f2.dest_city = ? AND f1.day_of_month = ? AND f2.day_of_month = ? " +
+                  "AND f1.canceled = 0 AND f2.canceled = 0 " +
                   "ORDER BY total_time, f1.fid, f2.fid";
   private static final String FIND_DAY_AND_MONTH_FROM_ID_SQL = "SELECT day_of_month, month_id FROM FLIGHTS WHERE fid = ?";
 
   private static final String ADD_ITINERARY_SQL = "INSERT INTO Itineraries_ckirby03 VALUES(?, ?, ?)";
 
-  private static final String RETRIEVE_RESERVATION_SQL = "SELECT * FROM Reservations_ckirby03 WHERE rid = ?";
+  private static final String RETRIEVE_UNPAID_RESERVATION_SQL =
+          "SELECT * FROM Reservations_ckirby03 WHERE rid = ? AND paid = 0";
 
   private static final String NUM_ITINERARIES_BY_DAY_USER_SQL =
-          "SELECT COUNT(*) AS num_reserved_itineraries"
+          "SELECT *"
         + " FROM Reservations_ckirby03 r"
         + " INNER JOIN Itineraries_ckirby03 i ON r.itid = i.itid"
         + " INNER JOIN FLIGHTS f ON i.fid1 = f.fid OR i.fid2 = f.fid"
@@ -57,6 +59,28 @@ public class Query extends QueryAbstract {
   private static final String MAKE_NEW_RESERVATION_SQL =
           "INSERT INTO Reservations_ckirby03 VALUES (?, ?, 0, ?)";
 
+  private static final String RETRIEVE_BALANCE_SQL =
+          "SELECT balance FROM Users_ckirby03 WHERE username = ?";
+
+  private static final String UPDATE_BALANCE_SQL =
+          "UPDATE Users_ckirby03 SET balance = ? - ? WHERE username = ?";
+
+  private static final String RETRIEVE_USER_RESERVATION_INFO_SQL =
+          "SELECT r.rid, r.paid, f1.fid AS f1_fid, f1.day_of_month AS f1_day_of_month, f1.carrier_id AS f1_carrier_id," +
+          " f1.flight_num AS f1_flight_num, f1.origin_city AS f1_origin_city," +
+          "f1.dest_city AS f1_dest_city, f1.actual_time AS f1_actual_time, f1.capacity AS f1_capacity," +
+          "f1.price AS f1_price, f2.fid AS f2_fid, f2.day_of_month AS f2_day_of_month," +
+          "f2.carrier_id AS f2_carrier_id, f2.flight_num AS f2_flight_num, f2.origin_city AS f2_origin_city," +
+          "f2.dest_city AS f2_dest_city, f2.actual_time AS f2_actual_time, f2.capacity AS f2_capacity," +
+          "f2.price AS f2_price " +
+          "FROM Reservations_ckirby03 AS r " +
+          "JOIN Itineraries_ckirby03 AS i ON i.itid = r.itid " +
+          "LEFT OUTER JOIN FLIGHTS AS f1 ON i.fid1 = f1.fid " +
+          "LEFT OUTER JOIN FLIGHTS AS f2 ON i.fid2 = f2.fid " +
+          "WHERE r.username = ?";
+
+
+
 
   private PreparedStatement flightCapacityStmt;
   private PreparedStatement matchingUsernameStmt;
@@ -65,9 +89,12 @@ public class Query extends QueryAbstract {
   private PreparedStatement findIndirectItineraryStmt;
   private PreparedStatement findDayAndMonthFromIdStmt;
   private PreparedStatement addItineraryStmt;
-  private PreparedStatement retrieveReservationStmt;
+  private PreparedStatement retrieveUnpaidReservationStmt;
   private PreparedStatement numItinerariesByDayUserStmt;
   private PreparedStatement makeNewReservationStmt;
+  private PreparedStatement updateBalanceStmt;
+  private PreparedStatement retrieveBalanceStmt;
+  private PreparedStatement retrieveUserReservationInfoStmt;
 
   // Instance variables
   private boolean loggedIn;
@@ -119,10 +146,12 @@ public class Query extends QueryAbstract {
     findIndirectItineraryStmt = conn.prepareStatement(FIND_INDIRECT_ITINERARY_SQL);
     findDayAndMonthFromIdStmt = conn.prepareStatement(FIND_DAY_AND_MONTH_FROM_ID_SQL);
     addItineraryStmt = conn.prepareStatement(ADD_ITINERARY_SQL);
-    retrieveReservationStmt = conn.prepareStatement(RETRIEVE_RESERVATION_SQL);
+    retrieveUnpaidReservationStmt = conn.prepareStatement(RETRIEVE_UNPAID_RESERVATION_SQL);
     numItinerariesByDayUserStmt = conn.prepareStatement(NUM_ITINERARIES_BY_DAY_USER_SQL);
     makeNewReservationStmt = conn.prepareStatement(MAKE_NEW_RESERVATION_SQL);
-
+    updateBalanceStmt = conn.prepareStatement(UPDATE_BALANCE_SQL);
+    retrieveBalanceStmt = conn.prepareStatement(RETRIEVE_BALANCE_SQL);
+    retrieveUserReservationInfoStmt = conn.prepareStatement(RETRIEVE_USER_RESERVATION_INFO_SQL);
   }
 
   /**
@@ -141,8 +170,8 @@ public class Query extends QueryAbstract {
     try {
       if (matchingLogin(username, password)) {
         loggedIn = true;
-        user = username;
-        return "Logged in as " + username + "\n";
+        user = username.toLowerCase();
+        return "Logged in as " + user + "\n";
       }
     } catch (SQLException e) {
       e.printStackTrace();
@@ -167,8 +196,13 @@ public class Query extends QueryAbstract {
     boolean usernameExists = true;
     try {
       usernameExists = matchingUsername(username);
-    } catch (SQLException e){
+    } catch (SQLException e) {
       e.printStackTrace();
+        try {
+          conn.rollback();
+        } catch (SQLException a) {
+          a.printStackTrace();
+        }
     }
 
     if (usernameExists) {
@@ -177,7 +211,12 @@ public class Query extends QueryAbstract {
       try {
         addUser(username, password, initAmount);
       } catch (SQLException e) {
-        e.printStackTrace();
+          try {
+            conn.rollback();
+            conn.setAutoCommit(true);
+          } catch (SQLException a) {
+            a.printStackTrace();
+          }
       }
     }
     return "Created user " + username + "\n";
@@ -187,12 +226,15 @@ public class Query extends QueryAbstract {
   private boolean matchingUsername(String username) throws SQLException {
     matchingUsernameStmt.clearParameters();
     matchingUsernameStmt.setString(1, username);
+    conn.setAutoCommit(false);
     ResultSet results = matchingUsernameStmt.executeQuery();
     int numEquivalentUsernames = 0;
     while (results.next()) {
       numEquivalentUsernames++;
     }
     results.close();
+    conn.commit();
+    conn.setAutoCommit(true);
     return numEquivalentUsernames != 0;
   }
 
@@ -216,7 +258,10 @@ public class Query extends QueryAbstract {
     addUserStmt.setString(1, username);
     addUserStmt.setBytes(2, managePassword.saltAndHashPassword(password));
     addUserStmt.setInt(3, initAmount);
+    conn.setAutoCommit(false);
     addUserStmt.executeUpdate();
+    conn.commit();
+    conn.setAutoCommit(true);
   }
 
   /**
@@ -256,9 +301,8 @@ public class Query extends QueryAbstract {
     if (numberOfItineraries <= 0) {
       return "Failed to search\n";
     }
-    StringBuffer sb = new StringBuffer();
     try {
-      sb = findItineraries(sb, originCity, destinationCity,
+      StringBuffer sb = findItineraries(originCity, destinationCity,
               dayOfMonth, numberOfItineraries, directFlight);
       if (sb.length() == 0) {
         return "No flights match your selection\n";
@@ -271,8 +315,10 @@ public class Query extends QueryAbstract {
     return "Failed to search\n";
   }
 
-  private StringBuffer findItineraries(StringBuffer sb, String originCity, String destCity,
+  private StringBuffer findItineraries(String originCity, String destCity,
         int dayOfMonth, int numItineraries, boolean directFlight) throws SQLException {
+    ArrayList<Compact> itineraries = new ArrayList<>();
+    providedItineraries.clear();
     findDirectItineraryStmt.clearParameters();
     findDirectItineraryStmt.setString(1, originCity);
     findDirectItineraryStmt.setString(2, destCity);
@@ -286,12 +332,9 @@ public class Query extends QueryAbstract {
               results.getString("origin_city"), results.getString("dest_city"),
               results.getInt("actual_time"), results.getInt("capacity"),
               results.getInt("price"));
-      Flight[] flights = {flight};
-      providedItineraries.put(itineraryId, flights);
-      sb.append("Itinerary " + numProcessed + ": 1 flight(s), "
-                      + flight.time + " minutes \n"
-              + flight);
+      Flight[] flights = {flight, null};
       numProcessed++;
+      itineraries.add(new Compact(flights, results.getInt("actual_time")));
     }
     results.close();
 
@@ -300,27 +343,40 @@ public class Query extends QueryAbstract {
       findIndirectItineraryStmt.setString(1, originCity);
       findIndirectItineraryStmt.setString(2, destCity);
       findIndirectItineraryStmt.setInt(3, dayOfMonth);
+      findIndirectItineraryStmt.setInt(4, dayOfMonth);
       ResultSet results2 = findIndirectItineraryStmt.executeQuery();
       while (results2.next() && numProcessed < numItineraries) {
-        int itineraryId = results.getInt("fid");
-        Flight flight1 = new Flight(itineraryId, results.getInt("f1_day_of_month"),
-                results.getString("f1_carrier_id"), results.getInt("f1_flight_num") + "",
-                results.getString("f1_origin_city"), results.getString("f1_dest_city"),
-                results.getInt("f1_actual_time"), results.getInt("f1_capacity"),
-                results.getInt("f1_price"));
-        Flight flight2 = new Flight(itineraryId, results.getInt("f2_day_of_month"),
-                results.getString("f2_carrier_id"), results.getInt("f2_flight_num") + "",
-                results.getString("f2_origin_city"), results.getString("f2_dest_city"),
-                results.getInt("f2_actual_time"), results.getInt("f2_capacity"),
-                results.getInt("f2_price"));
+        Flight flight1 = new Flight(results2.getInt("f1_fid"), results2.getInt("f1_day_of_month"),
+                results2.getString("f1_carrier_id"), results2.getInt("f1_flight_num") + "",
+                results2.getString("f1_origin_city"), results2.getString("f1_dest_city"),
+                results2.getInt("f1_actual_time"), results2.getInt("f1_capacity"),
+                results2.getInt("f1_price"));
+        Flight flight2 = new Flight(results2.getInt("f2_fid"), results2.getInt("f2_day_of_month"),
+                results2.getString("f2_carrier_id"), results2.getInt("f2_flight_num") + "",
+                results2.getString("f2_origin_city"), results2.getString("f2_dest_city"),
+                results2.getInt("f2_actual_time"), results2.getInt("f2_capacity"),
+                results2.getInt("f2_price"));
         Flight[] flights = {flight1, flight2};
-        providedItineraries.put(itineraryId, flights);
-        sb.append("Itinerary " + numProcessed + ": 2 flight(s), "
-                + results2.getInt("total_time") + " minutes \n"
-                + flight1 + "\n" + flight2 + "\n");
         numProcessed++;
+        itineraries.add(new Compact(flights, results2.getInt("total_time")));
       }
       results2.close();
+    }
+    StringBuffer sb = new StringBuffer();
+    numProcessed = 0;
+    Collections.sort(itineraries, new CompactComparator());
+    for (Compact itinerary : itineraries) {
+      if (itinerary.flights[1] == null) {
+        sb.append("Itinerary " + numProcessed + ": 1 flight(s), "
+                + itinerary.duration + " minutes\n"
+                + itinerary.flights[0] + "\n");
+      } else {
+        sb.append("Itinerary " + numProcessed + ": 2 flight(s), "
+                + itinerary.duration + " minutes\n"
+                + itinerary.flights[0] + "\n" + itinerary.flights[1] + "\n");
+      }
+      providedItineraries.put(numProcessed, itinerary.flights);
+      numProcessed++;
     }
     return sb;
   }
@@ -345,44 +401,66 @@ public class Query extends QueryAbstract {
    */
   public String transaction_book(int itineraryId) {
     if (!loggedIn) {
-      return "Cannot book reservations, not logged\n";
+      return "Cannot book reservations, not logged in\n";
     }
     if (!providedItineraries.containsKey(itineraryId)) {
       return "No such itinerary {@code itineraryId}\n";
     }
+    int itid = 1;
     try {
-      findDayAndMonthFromIdStmt.setInt(1, itineraryId);
-      ResultSet results = findDayAndMonthFromIdStmt.executeQuery();
-      int month = results.getInt("month_id");
-      int day = results.getInt("day_of_month");
-      results.close();
       Statement statement = conn.createStatement();
-      Statement statement2 = conn.createStatement();
+      String query = "SELECT itid FROM Itineraries_ckirby03 WHERE fid1 = "
+              + providedItineraries.get(itineraryId)[0].fid;
+      if (providedItineraries.get(itineraryId)[1] != null) {
+        query += "AND fid2 = " + providedItineraries.get(itineraryId)[1].fid;
+      }
+      ResultSet results = statement.executeQuery(query);
+      if (results.next()) {
+        itid = results.getInt("itid");
+      }
+      results.close();
+      findDayAndMonthFromIdStmt.setInt(1, providedItineraries.get(itineraryId)[0].fid);
+      ResultSet results2 = findDayAndMonthFromIdStmt.executeQuery();
+      results2.next();
+      int month = results2.getInt("month_id");
+      int day = results2.getInt("day_of_month");
+      results2.close();
       numItinerariesByDayUserStmt.setString(1, user);
       numItinerariesByDayUserStmt.setInt(2, month);
       numItinerariesByDayUserStmt.setInt(3, day);
-      ResultSet results2 = numItinerariesByDayUserStmt.executeQuery();
-      if (results2.next()) {
+      ResultSet results3 = numItinerariesByDayUserStmt.executeQuery();
+      if (results3.next()) {
         return "You cannot book two flights in the same day\n";
       }
     } catch (SQLException e) {
       e.printStackTrace();
     }
     try {
-      addItineraryStmt.setInt(1, itineraryId);
-      addItineraryStmt.setInt(2, providedItineraries.get(itineraryId)[0].fid);
-      addItineraryStmt.setInt(3, providedItineraries.get(itineraryId)[1].fid);
-      addItineraryStmt.executeUpdate();
       Statement statement = conn.createStatement();
-      String query = "SELECT MAX(rid) FROM Reservations_ckirby03";
-      ResultSet results = statement.executeQuery(query);
-      int rid = 1;
-      if (results.next()) {
-        rid = results.getInt(1) + 1;
+      String query2 = "SELECT MAX(itid) FROM Itineraries_ckirby03";
+      ResultSet results2 = statement.executeQuery(query2);
+      if (results2.next()) {
+        itid = results2.getInt(1) + 1;
       }
+
+      addItineraryStmt.setInt(1, itid);
+      addItineraryStmt.setInt(2, providedItineraries.get(itineraryId)[0].fid);
+      if (providedItineraries.get(itineraryId)[1] == null) {
+        addItineraryStmt.setNull(3, java.sql.Types.INTEGER);
+      } else {
+        addItineraryStmt.setInt(3, providedItineraries.get(itineraryId)[1].fid);
+      }
+      addItineraryStmt.executeUpdate();
+      String query3 = "SELECT MAX(rid) FROM Reservations_ckirby03";
+      ResultSet results3 = statement.executeQuery(query3);
+      int rid = 1;
+      if (results3.next()) {
+        rid = results3.getInt(1) + 1;
+      }
+
       makeNewReservationStmt.setInt(1, rid);
       makeNewReservationStmt.setString(2, user);
-      makeNewReservationStmt.setInt(3, itineraryId);
+      makeNewReservationStmt.setInt(3, itid);
       makeNewReservationStmt.executeUpdate();
       return "Booked flight(s), reservation ID: " + rid + "\n";
 
@@ -412,9 +490,13 @@ public class Query extends QueryAbstract {
       return "Cannot pay, not logged in\n";
     }
     try {
-      retrieveReservationStmt.setInt(1, reservationId);
-      ResultSet results = retrieveReservationStmt.executeQuery();
-      if (!results.next() || !results.getString("username").equalsIgnoreCase(user)) {
+      retrieveUnpaidReservationStmt.setInt(1, reservationId);
+      ResultSet results = retrieveUnpaidReservationStmt.executeQuery();
+      if (!results.next()) {
+        results.close();
+        return "Cannot find unpaid reservation " + reservationId + " under user: " + user + "\n";
+      }
+      if (!results.getString("username").equalsIgnoreCase(user)) {
         results.close();
         return "Cannot find unpaid reservation " + reservationId + " under user: " + user + "\n";
       }
@@ -422,6 +504,7 @@ public class Query extends QueryAbstract {
       Statement statement = conn.createStatement();
       String query = "SELECT fid1, fid2 FROM Itineraries_ckirby03 AS i WHERE i.itid = " + itineraryId;
       ResultSet results2 = statement.executeQuery(query);
+      results2.next();
       int flightId1 = results2.getInt("fid1");
       int flightId2 = results2.getInt("fid2");
       results2.close();
@@ -429,16 +512,21 @@ public class Query extends QueryAbstract {
       if (flightId2 != 0) {
         price += flightPrice(flightId2);
       }
-      String query2 = "SELECT balance FROM Users_ckirby03 WHERE username = " + user;
-      ResultSet results3 = statement.executeQuery(query2);
+      retrieveBalanceStmt.setString(1, user);
+      ResultSet results3 = retrieveBalanceStmt.executeQuery();
+      results3.next();
       int balance = results3.getInt("balance");
+      results3.close();
       if (balance < price) {
         return "User has only " + balance + " in account but itinerary costs " + price + "\n";
       }
-      String query3 = "UPDATE Users_ckirby03 SET balance = " + (balance - price) + " WHERE username = " + user;
-      statement.executeUpdate(query3);
-      String query4 = "UPDATE Reservations_ckirby03 SET paid = 1";
-      statement.executeUpdate(query4);
+      updateBalanceStmt.setInt(1, balance);
+      updateBalanceStmt.setInt(2, price);
+      updateBalanceStmt.setString(3, user);
+      updateBalanceStmt.executeUpdate();
+      String query2 = "UPDATE Reservations_ckirby03 SET paid = 1";
+      statement.executeUpdate(query2);
+      return "Paid reservation: " + reservationId + " remaining balance: " + (balance - price) + "\n";
     } catch (SQLException e) {
       e.printStackTrace();
     }
@@ -450,7 +538,10 @@ public class Query extends QueryAbstract {
     Statement statement = conn.createStatement();
     String query = "SELECT price FROM FLIGHTS WHERE fid = " + flightId;
     ResultSet results = statement.executeQuery(query);
-    return results.getInt("price");
+    results.next();
+    int price = results.getInt("price");
+    results.close();
+    return price;
   }
 
   /**
@@ -472,8 +563,53 @@ public class Query extends QueryAbstract {
    * @see Flight#toString()
    */
   public String transaction_reservations() {
-    // TODO: YOUR CODE HERE
+    if (!loggedIn) {
+      return "Cannot view reservations, not logged in\n";
+    }
+    try {
+      retrieveUserReservationInfoStmt.setString(1, user);
+      ResultSet results = retrieveUserReservationInfoStmt.executeQuery();
+      StringBuffer sb = new StringBuffer();
+      if (!results.next()) {
+        return "No reservations found\n";
+      } else {
+        sb = outputReservations(sb, results);
+        while (results.next()) {
+          sb = outputReservations(sb, results);
+        }
+      }
+      results.close();
+      return sb.toString();
+    } catch (SQLException e) {
+      e.printStackTrace();
+    }
     return "Failed to retrieve reservations\n";
+  }
+
+  private StringBuffer outputReservations(StringBuffer sb, ResultSet results) throws SQLException {
+    boolean paid = (results.getInt("paid") == 1);
+    sb.append("Reservation " + results.getInt("rid")+ " paid: " + paid + ":\n" +
+            "ID: " + results.getInt("f1_fid") +
+            " Day: " + results.getInt("f1_day_of_month") +
+            " Carrier: " + results.getString("f1_carrier_id") +
+            " Number: " + results.getInt("f1_flight_num") +
+            " Origin: " + results.getString("f1_origin_city") +
+            " Dest: " + results.getString("f1_dest_city") +
+            " Duration: " + results.getInt("f1_actual_time") +
+            " Capacity: " + results.getInt("f1_capacity") +
+            " Price: " + results.getInt("f1_price") + "\n");
+    if (results.getInt("f2_fid") != 0) {
+      sb.append("ID: " + results.getInt("f2_fid") +
+              " Day: " + results.getInt("f2_day_of_month") +
+              " Carrier: " + results.getString("f2_carrier_id") +
+              " Number: " + results.getInt("f2_flight_num") +
+              " Origin: " + results.getString("f2_origin_city") +
+              " Dest: " + results.getString("f2_dest_city") +
+              " Duration: " + results.getInt("f2_actual_time") +
+              " Capacity: " + results.getInt("f2_capacity") +
+              " Price: " + results.getInt("f2_price") + "\n");
+    }
+    return sb;
   }
 
   /**
@@ -487,7 +623,6 @@ public class Query extends QueryAbstract {
     results.next();
     int capacity = results.getInt("capacity");
     results.close();
-
     return capacity;
   }
 
@@ -532,4 +667,34 @@ public class Query extends QueryAbstract {
           + " Capacity: " + capacity + " Price: " + price;
     }
   }
+
+  // Compactly stores a Flight[2] and the cumulative duration of all non-null flights
+  //      in that array
+  public class Compact {
+
+    public Query.Flight[] flights;
+    public int duration;
+
+    public Compact(Query.Flight[] flights, int duration) {
+      this.flights = flights;
+      this.duration = duration;
+    }
+  }
+
+  // Compact objects should be compared using duration field
+  private class CompactComparator implements Comparator<Compact> {
+
+    public int compare(Compact obj1, Compact obj2) {
+
+      if (obj1.duration == obj2.duration) {
+        return 0;
+      } else if (obj1.duration < obj2.duration) {
+        return -1;
+      } else {
+        return 1;
+      }
+    }
+  }
 }
+
+

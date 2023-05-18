@@ -6,6 +6,6 @@ quit
 *
 
 # expected command output:
-Failed to search
+No flights match your selection
 Goodbye
 *
