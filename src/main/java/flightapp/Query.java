@@ -298,6 +298,7 @@ public class Query extends QueryAbstract {
     if (numberOfItineraries <= 0) {
       return "Failed to search\n";
     }
+
     try {
       StringBuffer sb = findItineraries(originCity, destinationCity,
               dayOfMonth, numberOfItineraries, directFlight);

@@ -1,0 +1,18 @@
+# Verifies that a user cannot book an itinerary they haven't searched for
+
+# commands:
+create ckirby03 chocolateBlueberry14 1000
+login ckirby03 chocolateBlueberry14
+search "Seattle WA" "Boston MA" 1 1 1
+book 1
+quit
+*
+
+# expected command output:
+Created user ckirby03
+Logged in as ckirby03
+Itinerary 0: 1 flight(s), 297 minutes
+ID: 60454 Day: 1 Carrier: AS Number: 24 Origin: Seattle WA Dest: Boston MA Duration: 297 Capacity: 14 Price: 140
+No such itinerary 1
+Goodbye
+*
