@@ -198,11 +198,6 @@ public class Query extends QueryAbstract {
       usernameExists = matchingUsername(username);
     } catch (SQLException e) {
       e.printStackTrace();
-        try {
-          conn.rollback();
-        } catch (SQLException a) {
-          a.printStackTrace();
-        }
     }
 
     if (usernameExists) {
@@ -214,8 +209,13 @@ public class Query extends QueryAbstract {
           try {
             conn.rollback();
             conn.setAutoCommit(true);
+
+            return "Failed to create user\n";
           } catch (SQLException a) {
             a.printStackTrace();
+          }
+          if (isDeadlock(e)) {
+            return transaction_createCustomer(username, password, initAmount);
           }
       }
     }
@@ -226,15 +226,12 @@ public class Query extends QueryAbstract {
   private boolean matchingUsername(String username) throws SQLException {
     matchingUsernameStmt.clearParameters();
     matchingUsernameStmt.setString(1, username);
-    conn.setAutoCommit(false);
     ResultSet results = matchingUsernameStmt.executeQuery();
     int numEquivalentUsernames = 0;
     while (results.next()) {
       numEquivalentUsernames++;
     }
     results.close();
-    conn.commit();
-    conn.setAutoCommit(true);
     return numEquivalentUsernames != 0;
   }
 
@@ -375,7 +372,9 @@ public class Query extends QueryAbstract {
                 + itinerary.duration + " minutes\n"
                 + itinerary.flights[0] + "\n" + itinerary.flights[1] + "\n");
       }
-      providedItineraries.put(numProcessed, itinerary.flights);
+      if (loggedIn) {
+        providedItineraries.put(numProcessed, itinerary.flights);
+      }
       numProcessed++;
     }
     return sb;
@@ -404,11 +403,13 @@ public class Query extends QueryAbstract {
       return "Cannot book reservations, not logged in\n";
     }
     if (!providedItineraries.containsKey(itineraryId)) {
-      return "No such itinerary {@code itineraryId}\n";
+      return "No such itinerary " + itineraryId +"\n";
     }
     int itid = 1;
+    int rid = 1;
     try {
       Statement statement = conn.createStatement();
+      conn.setAutoCommit(false);
       String query = "SELECT itid FROM Itineraries_ckirby03 WHERE fid1 = "
               + providedItineraries.get(itineraryId)[0].fid;
       if (providedItineraries.get(itineraryId)[1] != null) {
@@ -430,19 +431,47 @@ public class Query extends QueryAbstract {
       numItinerariesByDayUserStmt.setInt(3, day);
       ResultSet results3 = numItinerariesByDayUserStmt.executeQuery();
       if (results3.next()) {
+        conn.commit();
+        conn.setAutoCommit(true);
         return "You cannot book two flights in the same day\n";
       }
-    } catch (SQLException e) {
-      e.printStackTrace();
-    }
-    try {
-      Statement statement = conn.createStatement();
-      String query2 = "SELECT MAX(itid) FROM Itineraries_ckirby03";
-      ResultSet results2 = statement.executeQuery(query2);
-      if (results2.next()) {
-        itid = results2.getInt(1) + 1;
+      results3.close();
+      String query4 = "SELECT capacity - COUNT(*) " +
+              "FROM Reservations_ckirby03 r " +
+              "JOIN Itineraries_ckirby03 i ON r.itid = i.itid " +
+              "JOIN FLIGHTS f ON i.fid1 = f.fid OR i.fid2 = f.fid " +
+              "WHERE fid = " + providedItineraries.get(itineraryId)[0] + " AND paid = 1 " +
+              "GROUP BY capacity";
+      ResultSet results6 = statement.executeQuery(query4);
+      results6.next();
+      if (results6.getInt(1) <= 0) {
+        results6.close();
+        conn.commit();
+        conn.setAutoCommit(true);
+        return "Booking failed \n";
+      }
+      if (providedItineraries.get(itineraryId)[1] != null) {
+        String query5 = "SELECT capacity - COUNT(*) " +
+                "FROM Reservations_ckirby03 r " +
+                "JOIN Itineraries_ckirby03 i ON r.itid = i.itid " +
+                "JOIN FLIGHTS f ON i.fid1 = f.fid OR i.fid2 = f.fid " +
+                "WHERE fid = " + providedItineraries.get(itineraryId)[1] + " AND paid = 1 " +
+                "GROUP BY capacity";
+        ResultSet results7 = statement.executeQuery(query5);
+        results7.next();
+        if (results7.getInt(1) <= 0) {
+          results7.close();
+          conn.commit();
+          conn.setAutoCommit(true);
+          return "Booking failed \n";
+        }
       }
 
+      String query2 = "SELECT MAX(itid) FROM Itineraries_ckirby03";
+      ResultSet results4 = statement.executeQuery(query2);
+      if (results4.next()) {
+        itid = results4.getInt(1) + 1;
+      }
       addItineraryStmt.setInt(1, itid);
       addItineraryStmt.setInt(2, providedItineraries.get(itineraryId)[0].fid);
       if (providedItineraries.get(itineraryId)[1] == null) {
@@ -452,23 +481,158 @@ public class Query extends QueryAbstract {
       }
       addItineraryStmt.executeUpdate();
       String query3 = "SELECT MAX(rid) FROM Reservations_ckirby03";
-      ResultSet results3 = statement.executeQuery(query3);
-      int rid = 1;
-      if (results3.next()) {
-        rid = results3.getInt(1) + 1;
+      ResultSet results5 = statement.executeQuery(query3);
+      if (results5.next()) {
+        rid = results5.getInt(1) + 1;
       }
 
       makeNewReservationStmt.setInt(1, rid);
       makeNewReservationStmt.setString(2, user);
       makeNewReservationStmt.setInt(3, itid);
       makeNewReservationStmt.executeUpdate();
+      conn.commit();
+      conn.setAutoCommit(true);
       return "Booked flight(s), reservation ID: " + rid + "\n";
 
-    } catch (SQLException e){
-      e.printStackTrace();
+    } catch (SQLException e) {
+        e.printStackTrace();
+      try {
+        conn.rollback();
+        conn.setAutoCommit(true);
+      } catch (SQLException a) {
+        a.printStackTrace();
+        return "Booking failed\n";
+      }
+      if (isDeadlock(e)) {
+        try {
+          Thread.sleep((long)Math.random() * 5000);
+        } catch (InterruptedException e2) {
+
+        }
+        return transaction_book(itineraryId);
+      }
     }
     return "Booking failed\n";
   }
+
+//  public String transaction_book(int itineraryId) {
+//    if (!loggedIn) {
+//      return "Cannot book reservations, not logged in\n";
+//    }
+//    if (!providedItineraries.containsKey(itineraryId)) {
+//      return "No such itinerary {@code itineraryId}\n";
+//    }
+//    int itid = 1;
+//    int rid = 1;
+//    try {
+//      conn.setAutoCommit(false);
+//      Statement statement = conn.createStatement();
+//      String query = "SELECT itid FROM Itineraries_ckirby03 WHERE fid1 = "
+//              + providedItineraries.get(itineraryId)[0].fid;
+//      if (providedItineraries.get(itineraryId)[1] != null) {
+//        query += "AND fid2 = " + providedItineraries.get(itineraryId)[1].fid;
+//      }
+//      ResultSet results = statement.executeQuery(query);
+//      if (results.next()) {
+//        itid = results.getInt("itid");
+//      }
+//      results.close();
+//      findDayAndMonthFromIdStmt.setInt(1, providedItineraries.get(itineraryId)[0].fid);
+//      ResultSet results2 = findDayAndMonthFromIdStmt.executeQuery();
+//      results2.next();
+//      int month = results2.getInt("month_id");
+//      int day = results2.getInt("day_of_month");
+//      results2.close();
+//      numItinerariesByDayUserStmt.setString(1, user);
+//      numItinerariesByDayUserStmt.setInt(2, month);
+//      numItinerariesByDayUserStmt.setInt(3, day);
+//      ResultSet results3 = numItinerariesByDayUserStmt.executeQuery();
+//      if (results3.next()) {
+//        return "You cannot book two flights in the same day\n";
+//      }
+//
+//    } catch (SQLException e) {
+//      e.printStackTrace();
+//      try {
+//        conn.rollback();
+//        conn.setAutoCommit(true);
+//        if (isDeadlock(e)) {
+//          transaction_book(itineraryId);
+//        } else {
+//          return "You cannot book two flights in the same day\n";
+//        }
+//      } catch (SQLException a) {
+//        a.printStackTrace();
+//      }
+//    }
+//    try {
+//      Statement statement = conn.createStatement();
+//      String query2 = "SELECT MAX(itid) FROM Itineraries_ckirby03";
+//      ResultSet results2 = statement.executeQuery(query2);
+//      if (results2.next()) {
+//        itid = results2.getInt(1) + 1;
+//      }
+//      addItinerary(itid, itineraryId);
+//      String query3 = "SELECT MAX(rid) FROM Reservations_ckirby03";
+//      ResultSet results3 = statement.executeQuery(query3);
+//      if (results3.next()) {
+//        rid = results3.getInt(1) + 1;
+//      }
+//
+//    } catch (SQLException e) {
+//      try {
+//        conn.rollback();
+//        conn.setAutoCommit(true);
+//        if (isDeadlock(e)) {
+//          addItinerary(itid, itineraryId);
+//          //transaction_book(itineraryId);
+//        } else {
+//          return "Booking failed\n";
+//        }
+//      } catch (SQLException a) {
+//        a.printStackTrace();
+//      }
+//    }
+//    try {
+//      makeReservation(rid, itid);
+//      conn.commit();
+//      conn.setAutoCommit(true);
+//      return "Booked flight(s), reservation ID: " + rid + "\n";
+//    } catch (SQLException e) {
+//      try {
+//        conn.rollback();
+//        conn.setAutoCommit(true);
+//        if (isDeadlock(e)) {
+//          addItinerary(itid, itineraryId);
+//          //transaction_book(itineraryId);
+//        } else {
+//          return "Booking failed\n";
+//        }
+//      } catch (SQLException a) {
+//        a.printStackTrace();
+//      }
+//    }
+//    return "Booking failed\n";
+//  }
+
+//  private void addItinerary(int itid, int itineraryId) throws SQLException {
+//    addItineraryStmt.setInt(1, itid);
+//    addItineraryStmt.setInt(2, providedItineraries.get(itineraryId)[0].fid);
+//    if (providedItineraries.get(itineraryId)[1] == null) {
+//      addItineraryStmt.setNull(3, java.sql.Types.INTEGER);
+//    } else {
+//      addItineraryStmt.setInt(3, providedItineraries.get(itineraryId)[1].fid);
+//    }
+//    addItineraryStmt.executeUpdate();
+//  }
+
+//  private void makeReservation (int rid, int itid) throws SQLException {
+//    makeNewReservationStmt.setInt(1, rid);
+//    makeNewReservationStmt.setString(2, user);
+//    makeNewReservationStmt.setInt(3, itid);
+//    makeNewReservationStmt.executeUpdate();
+//
+//  }
 
   /**
    * Implements the pay function.
@@ -523,12 +687,23 @@ public class Query extends QueryAbstract {
       updateBalanceStmt.setInt(1, balance);
       updateBalanceStmt.setInt(2, price);
       updateBalanceStmt.setString(3, user);
+      conn.setAutoCommit(false);
       updateBalanceStmt.executeUpdate();
       String query2 = "UPDATE Reservations_ckirby03 SET paid = 1";
       statement.executeUpdate(query2);
+      conn.commit();
+      conn.setAutoCommit(true);
       return "Paid reservation: " + reservationId + " remaining balance: " + (balance - price) + "\n";
     } catch (SQLException e) {
-      e.printStackTrace();
+      try {
+        conn.rollback();
+        conn.setAutoCommit(true);
+      } catch (SQLException a) {
+        return "Failed to pay for reservation " + reservationId + "\n";
+      }
+      if (isDeadlock(e)) {
+        return transaction_pay(reservationId);
+      }
     }
     return "Failed to pay for reservation " + reservationId + "\n";
   }
