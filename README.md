@@ -18,7 +18,7 @@ Java CLI application that simulates a flight reservation system: users can searc
 ## Prerequisites
 - JDK 11+
 - Maven
-- Access to a SQL Server instance with the course-provided base tables (FLIGHTS, CARRIERS, MONTHS, WEEKDAYS)
+- Access to a SQL Server instance with the base tables (FLIGHTS, CARRIERS, MONTHS, WEEKDAYS)
 
 ## Setup
 1. Copy `dbconn.properties` from the course starter or fill in the values:
